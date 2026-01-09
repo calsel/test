@@ -41,9 +41,10 @@ bot.command('new', async (ctx) => {
         ])
       });
     }
-  } catch (e) {
+   } catch (e: any) {
     console.error('Error fetching leads:', e);
-    ctx.reply('❌ Ошибка при получении данных');
+    // ВРЕМЕННО: Выводим текст ошибки прямо в чат
+    ctx.reply(`❌ Ошибка:\n${e.message || JSON.stringify(e)}`);
   }
 });
 
