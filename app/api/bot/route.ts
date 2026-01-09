@@ -102,6 +102,14 @@ bot.on('message', async (ctx, next) => {
 // --- 4. ОБРАБОТКА КНОПОК (ACTIONS) ---
 
 bot.on('callback_query', async (ctx) => {
+  // Сразу гасим часики! Это критически важно.
+  // Оборачиваем в try/catch на случай, если кнопка уже "протухла" пока летел запрос
+  try {
+    await ctx.answerCbQuery();
+  } catch (e) {
+    console.log('⚠️ answerCbQuery failed (old query), but continuing logic...');
+  }
+
   // @ts-ignore
   const data = ctx.callbackQuery.data;
   if (!data) return;
@@ -115,7 +123,7 @@ bot.on('callback_query', async (ctx) => {
     // СМЕНА СТАТУСА
     if (action === 'status') {
       await prisma.lead.update({ where: { id }, data: { status: value } });
-      await ctx.answerCbQuery(`Статус изменен: ${value}`);
+      
       // Обновляем карточку
       const lead = await prisma.lead.findUnique({ where: { id } });
       if (lead) await updateMessage(ctx, lead);
@@ -124,13 +132,14 @@ bot.on('callback_query', async (ctx) => {
     // УДАЛЕНИЕ
     else if (action === 'delete') {
       await prisma.lead.delete({ where: { id } });
-      await ctx.answerCbQuery('Заявка удалена');
-      await ctx.deleteMessage(); // Удаляем сообщение из чата
+      
+      // Тут можно показать уведомление "всплывашкой"
+      // Но так как answerCbQuery уже вызван в начале, мы просто удаляем сообщение
+      await ctx.deleteMessage(); 
     }
 
     // ДОБАВЛЕНИЕ ЗАМЕТКИ (Запрос)
     else if (action === 'note') {
-      await ctx.answerCbQuery();
       await ctx.reply(
         `✍️ Напишите заметку для заявки #${id} в ответ на это сообщение:`, 
         { 
@@ -140,8 +149,10 @@ bot.on('callback_query', async (ctx) => {
     }
 
   } catch (e) {
-    console.error(e);
-    await ctx.answerCbQuery('Ошибка операции');
+    console.error('Ошибка в логике кнопок:', e);
+    // Если что-то упало, можно попробовать сообщить юзеру, 
+    // но answerCbQuery уже был вызван, поэтому просто reply
+    // await ctx.reply('❌ Ошибка при выполнении операции'); 
   }
 });
 
