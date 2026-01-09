@@ -1,0 +1,22 @@
+<svg width="512" height="512" viewBox="0 0 512 512" xmlns="http://www.w3.org/2000/svg">
+  <!-- Фон: Черный круг -->
+  <circle cx="256" cy="256" r="256" fill="#000000"/>
+  
+  <!-- Автомобиль: Золотой градиент -->
+  <defs>
+    <linearGradient id="goldGradient" x1="0%" y1="0%" x2="100%" y2="100%">
+      <stop offset="0%" style="stop-color:#F5D061;stop-opacity:1" />
+      <stop offset="50%" style="stop-color:#E1AD01;stop-opacity:1" />
+      <stop offset="100%" style="stop-color:#F5D061;stop-opacity:1" />
+    </linearGradient>
+  </defs>
+
+  <!-- Силуэт спорткара (упрощенный, агрессивный стиль) -->
+  <path d="M420 280 L380 200 H180 L140 280 H60 V340 H100 A30 30 0 0 0 160 340 H352 A30 30 0 0 0 412 340 H452 V280 H420 Z 
+           M190 220 H370 L395 270 H165 L190 220 Z" 
+        fill="url(#goldGradient)" stroke="none"/>
+        
+  <!-- Эффект скорости (линии снизу) -->
+  <rect x="80" y="370" width="200" height="10" rx="5" fill="#333333" />
+  <rect x="300" y="370" width="100" height="10" rx="5" fill="#333333" />
+</svg>
