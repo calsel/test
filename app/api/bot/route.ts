@@ -1,183 +1,226 @@
 import { NextResponse } from 'next/server';
 export const runtime = 'nodejs';
-import { Telegraf } from 'telegraf';
+import { Telegraf, Markup } from 'telegraf';
 import { prisma } from '@/lib/prisma';
 
 const bot = new Telegraf(process.env.TG_BOT_TOKEN!);
 
-// --- 1. МЕНЮ И СТАРТ ---
+// --- 1. ГЛАВНОЕ МЕНЮ И СТАРТ ---
+
+const mainMenu = Markup.keyboard([
+  ['🔥 Новые', '🛠 В работе'],
+  ['📊 Статистика', '📁 Архив']
+]).resize();
 
 bot.start(async (ctx) => {
   await ctx.reply(
-    '👋 <b>CRM Бот на связи!</b>\n\n' +
-    '📌 <b>Команды:</b>\n' +
-    '/new — Список новых (до 5 шт)\n' +
-    '/stats — Статистика за сегодня\n' +
-    '/find <code>&lt;id или телефон&gt;</code> — Поиск заявки',
-    { parse_mode: 'HTML' }
+    '👋 <b>CRM Система запущена!</b>\n\nИспользуйте меню снизу для управления.',
+    { parse_mode: 'HTML', ...mainMenu }
   );
 });
 
-// --- 2. НОВЫЕ ЗАЯВКИ (/new) ---
+// --- 2. ОБРАБОТКА ТЕКСТОВЫХ КОМАНД (МЕНЮ) ---
 
-bot.command('new', async (ctx) => {
-  try {
-    const leads = await prisma.lead.findMany({
-      where: { status: 'new' },
-      orderBy: { createdAt: 'desc' },
-      take: 5
-    });
+bot.hears('🔥 Новые', async (ctx) => getLeadsByStatus(ctx, 'new'));
+bot.hears('🛠 В работе', async (ctx) => getLeadsByStatus(ctx, 'in_work'));
+bot.hears('📁 Архив', async (ctx) => getLeadsByStatus(ctx, 'done'));
 
-    if (leads.length === 0) return ctx.reply('🎉 Новых заявок нет! Отдыхаем.');
-
-    for (const lead of leads) {
-      await sendLeadCard(ctx, lead);
-    }
-  } catch (e: any) {
-    console.error(e);
-    ctx.reply('❌ Ошибка базы данных');
-  }
-});
-
-// --- 3. ПОИСК (/find) ---
-
-bot.command('find', async (ctx) => {
-  const query = ctx.message.text.split(' ')[1];
-  if (!query) return ctx.reply('⚠️ Введите ID или телефон после команды.\nПример: /find 42');
-
-  try {
-    // Пробуем найти по ID (если число) или по телефону
-    const whereCondition = !isNaN(Number(query)) 
-      ? { id: Number(query) } 
-      : { phone: { contains: query } };
-
-    const leads = await prisma.lead.findMany({
-      where: whereCondition,
-      take: 5
-    });
-
-    if (leads.length === 0) return ctx.reply('🔍 Ничего не найдено.');
-
-    for (const lead of leads) {
-      await sendLeadCard(ctx, lead);
-    }
-  } catch (e) {
-    ctx.reply('❌ Ошибка поиска');
-  }
-});
-
-// --- 4. СТАТИСТИКА (/stats) ---
-
-bot.command('stats', async (ctx) => {
+bot.hears('📊 Статистика', async (ctx) => {
   try {
     const total = await prisma.lead.count();
-    const newLeads = await prisma.lead.count({ where: { status: 'new' } });
-    const inWork = await prisma.lead.count({ where: { status: 'in_work' } });
-    const done = await prisma.lead.count({ where: { status: 'done' } });
+    const stats = await prisma.lead.groupBy({
+      by: ['status'],
+      _count: { status: true }
+    });
+
+    const counts: Record<string, number> = {};
+    stats.forEach(s => counts[s.status] = s._count.status);
 
     await ctx.reply(
-      `📊 <b>Статистика:</b>\n\n` +
-      `🔥 Новые: <b>${newLeads}</b>\n` +
-      `🛠 В работе: <b>${inWork}</b>\n` +
-      `✅ Выполнено: <b>${done}</b>\n` +
-      `📦 Всего: <b>${total}</b>`,
+      `📊 <b>Сводка по продажам:</b>\n\n` +
+      `🔥 Новые: <b>${counts['new'] || 0}</b>\n` +
+      `🛠 В работе: <b>${counts['in_work'] || 0}</b>\n` +
+      `✅ Завершено: <b>${counts['done'] || 0}</b>\n` +
+      `🗑 Спам/Мусор: <b>${counts['spam'] || 0}</b>\n\n` +
+      `Всего в базе: <b>${total}</b>`,
       { parse_mode: 'HTML' }
     );
   } catch (e) {
-    ctx.reply('❌ Ошибка статистики');
+    ctx.reply('Ошибка получения статистики');
   }
 });
 
-// --- 5. ОБРАБОТКА КНОПОК ---
+// Поиск (оставляем командой, т.к. нужно вводить данные)
+bot.command('find', async (ctx) => {
+  const query = ctx.message.text.split(' ')[1];
+  if (!query) return ctx.reply('⚠️ Введите телефон или ID: /find 7999...');
+  
+  const where = !isNaN(Number(query)) ? { id: Number(query) } : { phone: { contains: query } };
+  const leads = await prisma.lead.findMany({ where, take: 5 });
+  
+  if (leads.length === 0) return ctx.reply('Ничего не найдено 🤷‍♂️');
+  for (const lead of leads) await sendLeadCard(ctx, lead);
+});
+
+// --- 3. ЛОГИКА ЗАМЕТОК (ForceReply) ---
+
+bot.on('message', async (ctx, next) => {
+  // @ts-ignore
+  const reply = ctx.message.reply_to_message;
+  // @ts-ignore
+  const text = ctx.message.text;
+
+  // Если это ответ на сообщение бота с просьбой ввести заметку
+  if (reply && reply.text && reply.text.startsWith('✍️ Напишите заметку') && text) {
+    try {
+      // Извлекаем ID заявки из текста сообщения бота (формат: "...для заявки #123")
+      const idMatch = reply.text.match(/#(\d+)/);
+      if (!idMatch) return;
+      
+      const id = parseInt(idMatch[1]);
+      
+      // Обновляем базу
+      await prisma.lead.update({
+        where: { id },
+        data: { notes: text }
+      });
+
+      await ctx.reply(`✅ Заметка добавлена к заявке #${id}!`);
+      
+      // Показываем обновленную карточку
+      const lead = await prisma.lead.findUnique({ where: { id } });
+      if (lead) await sendLeadCard(ctx, lead);
+      
+    } catch (e) {
+      ctx.reply('❌ Не удалось сохранить заметку');
+    }
+    return;
+  }
+  next();
+});
+
+// --- 4. ОБРАБОТКА КНОПОК (ACTIONS) ---
 
 bot.on('callback_query', async (ctx) => {
   // @ts-ignore
   const data = ctx.callbackQuery.data;
-  if (!data || !data.startsWith('status_')) return;
+  if (!data) return;
 
   const parts = data.split('_');
+  const action = parts[0]; // status, delete, note
   const id = parseInt(parts[1]);
-  const newStatus = parts.slice(2).join('_');
+  const value = parts.slice(2).join('_');
 
   try {
-    await prisma.lead.update({ where: { id }, data: { status: newStatus } });
+    // СМЕНА СТАТУСА
+    if (action === 'status') {
+      await prisma.lead.update({ where: { id }, data: { status: value } });
+      await ctx.answerCbQuery(`Статус изменен: ${value}`);
+      // Обновляем карточку
+      const lead = await prisma.lead.findUnique({ where: { id } });
+      if (lead) await updateMessage(ctx, lead);
+    } 
     
-    // Карта статусов для текста
-    const statusNames: Record<string, string> = {
-      'new': 'Новая 🔥',
-      'in_work': 'В работе 🛠',
-      'done': 'Завершено ✅',
-      'spam': 'Спам 🗑'
-    };
-
-    const statusText = statusNames[newStatus] || newStatus;
-    await ctx.answerCbQuery(`Статус: ${statusText}`);
-
-    // Получаем старый текст сообщения
-    // @ts-ignore
-    const oldText = ctx.callbackQuery.message?.text || `Заявка #${id}`;
-
-    // Генерируем новые кнопки в зависимости от статуса
-    let newButtons = [];
-    
-    if (newStatus === 'new') {
-       newButtons = [[{ text: 'В работу 🛠', callback_data: `status_${id}_in_work` }, { text: 'Спам 🗑', callback_data: `status_${id}_spam` }]];
-    } else if (newStatus === 'in_work') {
-       newButtons = [[{ text: '✅ Завершить', callback_data: `status_${id}_done` }, { text: '🔙 Отложить', callback_data: `status_${id}_new` }]];
-    } else {
-       // Если статус "done" или "spam" — убираем кнопки (или даем кнопку "Вернуть")
-       newButtons = [[{ text: '♻️ Вернуть в работу', callback_data: `status_${id}_in_work` }]];
+    // УДАЛЕНИЕ
+    else if (action === 'delete') {
+      await prisma.lead.delete({ where: { id } });
+      await ctx.answerCbQuery('Заявка удалена');
+      await ctx.deleteMessage(); // Удаляем сообщение из чата
     }
 
-    // Обновляем сообщение: меняем текст и клавиатуру
-    await ctx.editMessageText(
-      oldText.split('\n\nСтатус:')[0] + `\n\nСтатус: <b>${statusText}</b>`,
-      {
-        parse_mode: 'HTML',
-        reply_markup: { inline_keyboard: newButtons }
-      }
-    );
+    // ДОБАВЛЕНИЕ ЗАМЕТКИ (Запрос)
+    else if (action === 'note') {
+      await ctx.answerCbQuery();
+      await ctx.reply(
+        `✍️ Напишите заметку для заявки #${id} в ответ на это сообщение:`, 
+        { 
+          reply_markup: { force_reply: true } 
+        }
+      );
+    }
 
   } catch (e) {
     console.error(e);
-    await ctx.answerCbQuery('Ошибка обновления');
+    await ctx.answerCbQuery('Ошибка операции');
   }
 });
 
-// --- ХЕЛПЕР: ОТПРАВКА КАРТОЧКИ ---
-async function sendLeadCard(ctx: any, lead: any) {
-  const statusNames: Record<string, string> = {
-    'new': 'Новая 🔥',
-    'in_work': 'В работе 🛠',
-    'done': 'Завершено ✅',
-    'spam': 'Спам 🗑'
-  };
+// --- ХЕЛПЕРЫ ---
 
-  const text = 
-    `🚗 <b>Заявка #${lead.id}</b>\n` +
-    `👤 ${lead.name || '-'}\n` +
-    `📱 ${lead.phone}\n` +
-    `🚘 ${lead.car || '-'}\n` +
-    `📅 ${new Date(lead.createdAt).toLocaleDateString('ru-RU')}\n\n` +
-    `Статус: <b>${statusNames[lead.status] || lead.status}</b>`;
+async function getLeadsByStatus(ctx: any, status: string) {
+  const leads = await prisma.lead.findMany({
+    where: { status },
+    orderBy: { createdAt: 'desc' },
+    take: 5
+  });
 
-  // Кнопки зависят от текущего статуса
-  let buttons = [];
+  if (leads.length === 0) return ctx.reply(`В категории "${status}" пусто.`);
+  for (const lead of leads) await sendLeadCard(ctx, lead);
+}
+
+// Генерация кнопок
+function getButtons(lead: any) {
+  const id = lead.id;
+  
+  // Кнопки управления статусом
+  const statusBtns = [];
   if (lead.status === 'new') {
-    buttons = [[{ text: '🛠 В работу', callback_data: `status_${lead.id}_in_work` }, { text: '🗑 Спам', callback_data: `status_${lead.id}_spam` }]];
+    statusBtns.push({ text: '👷‍♂️ В работу', callback_data: `status_${id}_in_work` });
+    statusBtns.push({ text: '🗑 Спам', callback_data: `status_${id}_spam` });
   } else if (lead.status === 'in_work') {
-    buttons = [[{ text: '✅ Завершить', callback_data: `status_${lead.id}_done` }]];
+    statusBtns.push({ text: '✅ Готово', callback_data: `status_${id}_done` });
+    statusBtns.push({ text: '🙅‍♂️ Отказ', callback_data: `status_${id}_spam` });
   } else {
-    buttons = [[{ text: '♻️ Вернуть', callback_data: `status_${lead.id}_new` }]];
+    statusBtns.push({ text: '♻️ Вернуть', callback_data: `status_${id}_new` });
+    statusBtns.push({ text: '❌ Удалить', callback_data: `delete_${id}` });
   }
 
-  await ctx.reply(text, {
+  // Кнопка заметок (всегда есть)
+  const noteBtn = [{ text: '📝 Добавить заметку', callback_data: `note_${id}` }];
+
+  return [statusBtns, noteBtn];
+}
+
+// Отправка новой карточки
+async function sendLeadCard(ctx: any, lead: any) {
+  await ctx.reply(formatLeadText(lead), {
     parse_mode: 'HTML',
-    reply_markup: { inline_keyboard: buttons }
+    reply_markup: { inline_keyboard: getButtons(lead) }
   });
 }
 
-// --- WEBHOOK ---
+// Обновление старой карточки (при нажатии кнопок)
+async function updateMessage(ctx: any, lead: any) {
+  try {
+    await ctx.editMessageText(formatLeadText(lead), {
+      parse_mode: 'HTML',
+      reply_markup: { inline_keyboard: getButtons(lead) }
+    });
+  } catch (e) {
+    // Игнорируем ошибку, если текст не изменился
+  }
+}
+
+function formatLeadText(lead: any) {
+  const statusMap: Record<string, string> = {
+    'new': '🔥 Новая', 'in_work': '🛠 В работе', 'done': '✅ Завершена', 'spam': '🗑 Спам'
+  };
+  
+  let text = `🚗 <b>Заявка #${lead.id}</b>\n` +
+             `👤 ${lead.name || 'Не указано'}\n` +
+             `📱 <code>${lead.phone}</code>\n` +
+             `🚘 ${lead.car || '-'}\n` +
+             `------------------\n` +
+             `Статус: <b>${statusMap[lead.status] || lead.status}</b>`;
+
+  if (lead.notes) {
+    text += `\n📝 <i>${lead.notes}</i>`;
+  }
+  
+  return text;
+}
+
+// --- WEBHOOK ENDPOINTS ---
 export async function POST(req: Request) {
   try {
     const body = await req.json();
@@ -189,5 +232,5 @@ export async function POST(req: Request) {
 }
 
 export async function GET() {
-  return NextResponse.json({ status: "Bot is alive v2" });
+  return NextResponse.json({ status: "CRM Bot Active" });
 }

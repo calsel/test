@@ -13,6 +13,8 @@ model Lead {
   name      String?
   phone     String
   car       String?
-  status    String   @default("new")
+  status    String   @default("new") 
+  notes     String?  // <-- Новое поле для заметок
   createdAt DateTime @default(now())
 }
+
