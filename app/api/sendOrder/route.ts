@@ -1,6 +1,7 @@
 import { NextResponse } from "next/server";
 import crypto from "crypto";
 import fs from "fs";
+import path from "path";
 
 type Body = {
   car: string;
@@ -43,8 +44,8 @@ export async function POST(request: Request) {
       if (!encrypted) {
         // try reading file encrypted.token in app folder
         try {
-          const path = new URL("./encrypted.token", import.meta.url).pathname;
-          if (fs.existsSync(path)) encrypted = fs.readFileSync(path, "utf8").trim();
+          const candidate = path.join(process.cwd(), "my-app", "encrypted.token");
+          if (fs.existsSync(candidate)) encrypted = fs.readFileSync(candidate, "utf8").trim();
         } catch (e) {
           // ignore
         }
