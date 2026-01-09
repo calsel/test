@@ -36,9 +36,13 @@ bot.command('new', async (ctx) => {
 `;
       await ctx.reply(text, {
         parse_mode: 'HTML',
-        ...Markup.inlineKeyboard([
-          [Markup.button.callback('✅ В работу', `status_${lead.id}_in_work`)]
-        ])
+        reply_markup: {
+          inline_keyboard: [
+            [
+              { text: '✅ В работу', callback_data: `status_${lead.id}_in_work` }
+            ]
+          ]
+        }
       });
     }
    } catch (e: any) {
