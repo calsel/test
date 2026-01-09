@@ -1,7 +1,7 @@
 // app/page.jsx (или pages/index.jsx)
 "use client";
 
-import { useState } from "react";
+import { useState, FormEvent } from "react";
 import MainContent from "./components/MainContent";
 import Cars from "./components/Cars";
 import Order from "./components/Order";
@@ -13,7 +13,7 @@ export default function Page() {
 
   const onSelectCar = (title: string) => setForm((p) => ({ ...p, car: title }));
 
-  const sendOrder = async (e) => {
+  const sendOrder = async (e: FormEvent<HTMLFormElement>) => {
     e.preventDefault();
     try {
       const apiUrl = process.env.NEXT_PUBLIC_API_URL || "/api/sendOrder";
