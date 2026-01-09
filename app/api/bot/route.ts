@@ -117,3 +117,7 @@ export async function POST(req: Request) {
     return NextResponse.json({ ok: false }, { status: 500 });
   }
 }
+
+export async function GET() {
+  return NextResponse.json({ status: "Bot is alive" });
+}
