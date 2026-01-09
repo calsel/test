@@ -11,7 +11,7 @@ export default function Page() {
 
   const isError = (field: "car" | "name" | "phone") => !form[field];
 
-  const onSelectCar = (title) => setForm((p) => ({ ...p, car: title }));
+  const onSelectCar = (title: string) => setForm((p) => ({ ...p, car: title }));
 
   const sendOrder = async (e) => {
     e.preventDefault();
